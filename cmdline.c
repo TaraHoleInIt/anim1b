@@ -21,7 +21,7 @@ static int ThresholdValue = 128;
 static struct argp_option Options[ ] = {
     { "dither", 'd', "algorithm", OPTION_ARG_OPTIONAL, "Dither output" },
     { "threshold", 't', "value", 0, "Threshold for non dithered output [0-255]" },
-    { "invert", 'i', 0, "Invert output" },
+    { "invert", 'i', NULL, 0, "Invert output" },
     { NULL }
 };
 
@@ -38,7 +38,7 @@ static char Documentation[ ] = "anim1b: Image to SSD1306 converter" \
     "  c16x16   Cluster 16x16\n\n" \
 ;
 
-static char ArgsDocumentation[ ] = "input output";
+static char ArgsDocumentation[ ] = "images output";
 
 static struct argp P = {
     Options, ParseArgs, ArgsDocumentation, Documentation
@@ -47,6 +47,11 @@ static struct argp P = {
 static char** Filenames = NULL;
 static int FilenameCount = 0;
 
+/*
+ * ParseDither:
+ *
+ * Returns a FREE_IMAGE_DITHER type from the given string.
+ */
 static FREE_IMAGE_DITHER ParseDither( const char* DitherText ) {
     FREE_IMAGE_DITHER Result = FID_FS;
 
@@ -72,12 +77,33 @@ static FREE_IMAGE_DITHER ParseDither( const char* DitherText ) {
     return Result;
 }
 
+char* AddInputFile( const char* Filename ) {
+    char* Result = NULL;
+    int Len = 0;
+
+    if ( Filename && ( Len = strlen( Filename ) ) > 0 ) {
+        if ( ( Result = ( char* ) malloc( Len + 1 ) ) != NULL ) {
+            memset( Result, 0, Len + 1 );
+            strncpy( Result, Filename, Len );
+
+            Filenames[ FilenameCount++ ] = Result;
+        }
+    }
+
+    return Result;
+}
+
+/*
+ * ParseArgs:
+ *
+ * Callback for argp command line parsing.
+ */
 static error_t ParseArgs( int Key, char* Arg, struct argp_state* State ) {
     int Value = 0;
 
     switch ( Key ) {
         case 'd': {
-            DitherAlgorithm = ( Arg == NULL ? FID_FS : ParseDither( Arg ) );
+            DitherAlgorithm = ParseDither( Arg );
             DitherFlag = 1;
 
             if ( DitherAlgorithm == -1 )
@@ -99,19 +125,12 @@ static error_t ParseArgs( int Key, char* Arg, struct argp_state* State ) {
             break;
         }
         case ARGP_KEY_ARG: {
-            if ( Arg ) {
-                Filenames[ FilenameCount ] = ( char* ) malloc( strlen( Arg ) + 1 );
-
-                if ( Filenames[ FilenameCount ] != NULL ) {
-                    memset( Filenames[ FilenameCount ], 0, strlen( Arg ) + 1 );
-                    strncpy( Filenames[ FilenameCount ], Arg, strlen( Arg ) );
-                    FilenameCount++;
-                }
-            }
-
+            /* Add another input file to the list */
+            AddInputFile( Arg );
             break;
         }
         case ARGP_KEY_END: {
+            /* Bail unless we at least have one input and output */
             if ( State->arg_num < 2 )
                 argp_usage( State );
 
@@ -145,6 +164,10 @@ const char* CMDLine_GetOutputFilename( void ) {
 
 int CMDLine_GetInputCount( void ) {
     return FilenameCount > 1 ? FilenameCount - 1 : 1;
+}
+
+int CMDLine_GetInvertFlag( void ) {
+    return InvertFlag;
 }
 
 int CMDLine_Handler( int Argc, char** Argv ) {

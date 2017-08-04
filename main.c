@@ -25,8 +25,11 @@ int CMDLine_GetColorThreshold( void );
 const char** CMDLine_GetInputFilenames( void );
 const char* CMDLine_GetOutputFilename( void );
 int CMDLine_GetInputCount( void );
+int CMDLine_GetInvertFlag( void );
 int CMDLine_Handler( int Argc, char** Argv );
 void CMDLine_Free( void );
+
+int ShouldInvertOutput = 0;
 
 void ErrorHandler( FREE_IMAGE_FORMAT Fmt, const char* Message ) {
     printf( "%s: %s\n", __FUNCTION__, Message );
@@ -91,7 +94,7 @@ uint8_t PixelIndex( FIBITMAP* Input, int x, int y ) {
     uint8_t Index = 0;
 
     FreeImage_GetPixelIndex( Input, x, y, &Index );
-    return Index;
+    return ShouldInvertOutput ? ! Index : Index;
 }
 
 int SSD1306_Format( FIBITMAP* Input, uint8_t* OutBuffer ) {
@@ -176,6 +179,8 @@ int main( int Argc, char** Argv ) {
     FreeImage_SetOutputMessage( ErrorHandler );
 
     if ( CMDLine_Handler( Argc, Argv ) == 0 ) {
+        ShouldInvertOutput = CMDLine_GetInvertFlag( );
+
         if ( ( Filenames = CMDLine_GetInputFilenames( ) ) != NULL ) {
             if ( OpenOutput( ) ) {
                 for ( i = 0; i < CMDLine_GetInputCount( ); i++ ) {
