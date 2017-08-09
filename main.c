@@ -8,28 +8,26 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <errno.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <FreeImage.h>
+#include "cmdline.h"
+#include "output.h"
 
 #define BIT( n ) ( 1 << n )
 
-#define Display_Width 128
-#define Display_Height 64
-#define Display_Ratio ( ( float ) ( ( float ) Display_Width ) / ( ( float ) Display_Height ) )
-#define Display_Size ( ( Display_Width * Display_Height ) / 8 )
+int AreWeWritingAGIF( void );
+uint8_t* AllocateFramebuffer( void );
+int OpenOutput( void );
+void CloseOutput( void );
 
-FREE_IMAGE_DITHER CMDLine_GetDitherAlgorithm( void );
-int CMDLine_DitherEnabled( void );
-int CMDLine_GetColorThreshold( void );
-const char** CMDLine_GetInputFilenames( void );
-const char* CMDLine_GetOutputFilename( void );
-int CMDLine_GetInputCount( void );
-int CMDLine_GetInvertFlag( void );
-int CMDLine_Handler( int Argc, char** Argv );
-void CMDLine_Free( void );
+static int Display_Width = 0;
+static int Display_Height = 0;
+static int Display_Size = 0;
 
-int ShouldInvertOutput = 0;
+static int ShouldWriteHeader = 0;
+static int ShouldInvertOutput = 0;
 
 void ErrorHandler( FREE_IMAGE_FORMAT Fmt, const char* Message ) {
     printf( "%s: %s\n", __FUNCTION__, Message );
@@ -44,11 +42,20 @@ void ErrorHandler( FREE_IMAGE_FORMAT Fmt, const char* Message ) {
 FIBITMAP* Make1BPP( FIBITMAP* Input ) {
     FIBITMAP* Output = NULL;
 
-    if ( CMDLine_DitherEnabled( ) ) {
-        Output = FreeImage_Dither( Input, CMDLine_GetDitherAlgorithm( ) );
+    if ( FreeImage_GetBPP( Input ) > 1 ) {
+        if ( CmdLine_DitherEnabled( ) ) {
+            Output = FreeImage_Dither( Input, CmdLine_GetDitherAlgorithm( ) );
+        } else {
+            Output = FreeImage_Threshold( Input, CmdLine_GetColorThreshold( ) );
+        }
     } else {
-        Output = FreeImage_Threshold( Input, CMDLine_GetColorThreshold( ) );
+        /* Do not modify images that are already 1bpp. */
+        Output = Input;
     }
+
+    /* If requested on the command line, invert the output */
+    if ( Output != NULL && ShouldInvertOutput )
+        FreeImage_Invert( Output );
 
     return Output;
 }
@@ -94,7 +101,7 @@ uint8_t PixelIndex( FIBITMAP* Input, int x, int y ) {
     uint8_t Index = 0;
 
     FreeImage_GetPixelIndex( Input, x, y, &Index );
-    return ShouldInvertOutput ? ! Index : Index;
+    return Index;
 }
 
 int SSD1306_Format( FIBITMAP* Input, uint8_t* OutBuffer ) {
@@ -135,76 +142,95 @@ int SSD1306_Format( FIBITMAP* Input, uint8_t* OutBuffer ) {
     return 1;
 }
 
-FILE* OutputFile = NULL;
+uint8_t* AllocateFramebuffer( void ) {
+    uint8_t* Result = NULL;
 
-int OpenOutput( void ) {
-    const char* Filename = NULL;
-    struct stat st;
+    if ( ( Result = ( ( uint8_t* ) malloc( Display_Size ) ) ) != NULL ) {
+        memset( Result, 0, Display_Size );
+    }
 
-    if ( ( Filename = CMDLine_GetOutputFilename( ) ) != NULL ) {
-        if ( access( Filename, F_OK ) == 0 ) {
-            printf( "Output file \"%s\" already exists, overwrite? (Y/N) ", Filename );
+    return Result;
+}
 
-            if ( tolower( getchar( ) ) == 'n' )
-                return 0;
+void Go( void ) {
+    const char** InputFiles = NULL;
+    uint8_t* Framebuffer = NULL;
+    FIBITMAP* ImageBW = NULL;
+    FIBITMAP* Image = NULL;
+    int FramesWritten = 0;
+    int Result = 0;
+    int Count = 0;
+    int i = 0;
+
+    if ( ( Framebuffer = AllocateFramebuffer( ) ) == NULL ) {
+        printf( "Error allocating %d bytes for a framebuffer.\n", Display_Size );
+        return;
+    }
+
+    Result = OpenOutput( );
+
+    switch ( Result ) {
+        case EEXIST: {
+            printf( "Cancelled.\n" );
+            return;
         }
+        case 0: {
+            printf( "Failed to open \"%s\" for write.\n", CmdLine_GetOutputFilename( ) );
+            return;
+        }
+        default: break;
+    };
 
-        OutputFile = fopen( Filename, "wb+" );
+    if ( ( InputFiles = CmdLine_GetInputFilenames( ) ) != NULL ) {
+        Count = CmdLine_GetInputCount( );
+
+        printf( "Converting %d input files...\n", Count );
+
+        for ( i = 0; i < Count; i++ ) {
+            /* Make sure the input image is the proper dimensions */
+            if ( ( Image = VerifyAndLoadInput( InputFiles[ i ] ) ) == NULL ) {
+                printf( "Error: VerifyAndLoadInput %s\n", InputFiles[ i ] );
+                break;
+            }
+
+            /* Convert input image to 1 bit per pixel */
+            if ( ( ImageBW = Make1BPP( Image ) ) != NULL ) {
+                if ( AreWeWritingAGIF( ) == 0 ) {
+                    SSD1306_Format( ImageBW, Framebuffer );
+                    WriteFrame( ( void* ) Framebuffer );
+                } else {
+                    WriteFrame( ( void* ) ImageBW );
+                }
+
+                FreeImage_Unload( ImageBW );
+                FramesWritten++;
+            }
+
+            FreeImage_Unload( Image );
+        }
     }
 
-    return OutputFile ? 1 : 0;
-}
+    //printf( "Wrote %d frame(s) to \"%s\"\n", FramesWritten, CmdLine_GetOutputFilename( ) );
 
-void CloseOutput( void ) {
-    if ( OutputFile ) {
-        fclose( OutputFile );
-        OutputFile = NULL;
-    }
-}
-
-void WriteFBToDisk( uint8_t* FB ) {
-    if ( OutputFile && FB )
-        fwrite( FB, 1, Display_Size, OutputFile );
+    CloseOutput( );
+    free( Framebuffer );
 }
 
 int main( int Argc, char** Argv ) {
-    static uint8_t FramebufferOut[ Display_Size ];
-    const char** Filenames = NULL;
-    FIBITMAP* Input = NULL;
-    FIBITMAP* BW = NULL;
-    int Frames = 0;
-    int i = 0;
-
     FreeImage_Initialise( FALSE );
     FreeImage_SetOutputMessage( ErrorHandler );
 
-    if ( CMDLine_Handler( Argc, Argv ) == 0 ) {
-        ShouldInvertOutput = CMDLine_GetInvertFlag( );
+    if ( CmdLine_Handler( Argc, Argv ) == 0 ) {
+        Display_Width = CmdLine_GetOutputWidth( );
+        Display_Height = CmdLine_GetOutputHeight( );
+        Display_Size = ( Display_Width * Display_Height ) / 8;
+        ShouldInvertOutput = CmdLine_GetInvertFlag( );
 
-        if ( ( Filenames = CMDLine_GetInputFilenames( ) ) != NULL ) {
-            if ( OpenOutput( ) ) {
-                for ( i = 0; i < CMDLine_GetInputCount( ); i++ ) {
-                    if ( ( Input = VerifyAndLoadInput( Filenames[ i ] ) ) != NULL ) {
-                        if ( ( BW = Make1BPP( Input ) ) != NULL ) {
-                            SSD1306_Format( BW, FramebufferOut );
-                            WriteFBToDisk( FramebufferOut );
-
-                            FreeImage_Unload( BW );
-                            Frames++;
-                        }
-
-                        FreeImage_Unload( Input );
-                    }
-                }
-
-                CloseOutput( );
-                printf( "Wrote %d frames into \"%s\"\n", Frames, CMDLine_GetOutputFilename( ) );
-            }
-        }
-
-        CMDLine_Free( );
+        Go( );
+        CmdLine_Free( );
     }
 
     FreeImage_DeInitialise( );
     return 0;
 }
+

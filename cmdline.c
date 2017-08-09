@@ -9,6 +9,14 @@
 #include <stdlib.h>
 #include <FreeImage.h>
 #include <argp.h>
+#include "cmdline.h"
+
+#define DEFAULT_IMAGE_WIDTH 128
+#define DEFAULT_IMAGE_HEIGHT 64
+#define DEFAULT_IMAGE_DELAY 100
+
+#define IMAGE_MAX_WIDTH 128
+#define IMAGE_MAX_HEIGHT 128
 
 static FREE_IMAGE_DITHER ParseDither( const char* DitherText );
 static error_t ParseArgs( int Key, char* Arg, struct argp_state* State );
@@ -17,11 +25,19 @@ static FREE_IMAGE_DITHER DitherAlgorithm = FID_FS;
 static int DitherFlag = 0;
 static int InvertFlag = 0;
 static int ThresholdValue = 128;
+static int ImageWidth = DEFAULT_IMAGE_WIDTH;
+static int ImageHeight = DEFAULT_IMAGE_HEIGHT;
+static int Delay = DEFAULT_IMAGE_DELAY;
+static int ShouldWriteHeader = 1;
 
 static struct argp_option Options[ ] = {
     { "dither", 'd', "algorithm", OPTION_ARG_OPTIONAL, "Dither output" },
     { "threshold", 't', "value", 0, "Threshold for non dithered output [0-255]" },
     { "invert", 'i', NULL, 0, "Invert output" },
+    { "width", 'w', "width", 0, "Output image width" },
+    { "height", 'h', "height", 0, "Outpt image height" },
+    { "delay", 'l', "delay", 0, "Delay between frames in milliseconds" },
+    { "noheader", 'n', NULL, 0, "Do not write header, only write raw frames" },
     { NULL }
 };
 
@@ -124,6 +140,32 @@ static error_t ParseArgs( int Key, char* Arg, struct argp_state* State ) {
             InvertFlag = 1;
             break;
         }
+        case 'w': {
+            Value = atoi( Arg );
+
+            if ( Value <= 0 || Value > IMAGE_MAX_WIDTH )
+                argp_error( State, "Output width must be between 1 and %d", IMAGE_MAX_WIDTH );
+
+            ImageWidth = Value;
+            break;
+        }
+        case 'h': {
+            Value = atoi( Arg );
+
+            if ( Value <= 0 || Value > IMAGE_MAX_HEIGHT )
+                argp_error( State, "Output height must be between 1 and %d", IMAGE_MAX_HEIGHT );
+
+            ImageHeight = Value;
+            break;
+        }
+        case 'n': {
+            ShouldWriteHeader = 0;
+            break;
+        }
+        case 'l': {
+            Delay = atoi( Arg );
+            break;
+        }
         case ARGP_KEY_ARG: {
             /* Add another input file to the list */
             AddInputFile( Arg );
@@ -142,35 +184,51 @@ static error_t ParseArgs( int Key, char* Arg, struct argp_state* State ) {
     return 0;
 }
 
-FREE_IMAGE_DITHER CMDLine_GetDitherAlgorithm( void ) {
+FREE_IMAGE_DITHER CmdLine_GetDitherAlgorithm( void ) {
     return DitherAlgorithm;
 }
 
-int CMDLine_DitherEnabled( void ) {
+int CmdLine_DitherEnabled( void ) {
     return DitherFlag;
 }
 
-int CMDLine_GetColorThreshold( void ) {
+int CmdLine_GetColorThreshold( void ) {
     return ThresholdValue;
 }
 
-const char** CMDLine_GetInputFilenames( void ) {
+const char** CmdLine_GetInputFilenames( void ) {
     return ( const char** ) Filenames;
 }
 
-const char* CMDLine_GetOutputFilename( void ) {
+const char* CmdLine_GetOutputFilename( void ) {
     return ( Filenames && Filenames[ FilenameCount - 1 ] ) ? Filenames[ FilenameCount - 1 ] : NULL;
 }
 
-int CMDLine_GetInputCount( void ) {
+int CmdLine_GetInputCount( void ) {
     return FilenameCount > 1 ? FilenameCount - 1 : 1;
 }
 
-int CMDLine_GetInvertFlag( void ) {
+int CmdLine_GetInvertFlag( void ) {
     return InvertFlag;
 }
 
-int CMDLine_Handler( int Argc, char** Argv ) {
+int CmdLine_GetOutputWidth( void ) {
+    return ImageWidth;
+}
+
+int CmdLine_GetOutputHeight( void ) {
+    return ImageHeight;
+}
+
+int CmdLine_GetOutputDelay( void ) {
+    return Delay;
+}
+
+int CmdLine_GetWriteHeaderFlag( void ) {
+    return ShouldWriteHeader;
+}
+
+int CmdLine_Handler( int Argc, char** Argv ) {
     Filenames = ( char** ) malloc( sizeof( char* ) * Argc );
 
     if ( Filenames ) {
@@ -181,7 +239,7 @@ int CMDLine_Handler( int Argc, char** Argv ) {
     return 1;
 }
 
-void CMDLine_Free( void ) {
+void CmdLine_Free( void ) {
     int i = 0;
 
     if ( Filenames ) {
