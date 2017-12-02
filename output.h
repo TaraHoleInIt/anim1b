@@ -1,17 +1,36 @@
 #ifndef _OUTPUT_H_
 #define _OUTPUT_H_
 
-struct ANMHeader {
-    uint16_t Width;
-    uint16_t Height;
-    uint16_t Frames;
-    uint8_t DelayBetweenFrames;
-    uint8_t Reserved[ 5 ];
-} __attribute__( ( packed ) );
+#define VerboseMessage( Text, ... ) { \
+    printf( "%s line %d: %s.\n", __FUNCTION__, __LINE__, Text ); \
+}
 
-int OpenOutput( void );
-void CloseOutput( void );
-void WriteFrame( void* Frame );
-int AreWeWritingAGIF( void );
+#define NullCheck( ptr, retexpr ) { \
+    if ( ptr == NULL ) { \
+        printf( "%s line %d: %s == NULL\n", __FUNCTION__, __LINE__, #ptr ); \
+        retexpr; \
+    }; \
+}
+
+#define CheckExpr( expr, retexpr ) { \
+    if ( expr ) { \
+        printf( "%s line %d: %s\n", __FUNCTION__, __LINE__, #expr ); \
+        retexpr; \
+    } \
+}
+
+typedef enum {
+    AddressMode_Horizontal = 0,
+    AddressMode_Vertical
+} SSD1306_AddressMode;
+
+bool IsOutputAGIF( void );
+bool OpenGIFOutput( void );
+void CloseGIFOutput( void );
+bool AddGIFFrame( FIBITMAP* Input, uint32_t AnimationDelay );
+
+bool OpenRawOutput( void );
+void CloseRawOutput( void );
+bool AddRawFrame( uint8_t* Data, int Width, int Height );
 
 #endif

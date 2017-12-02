@@ -8,6 +8,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <stdbool.h>
 #include <ctype.h>
 #include <errno.h>
 #include <unistd.h>
@@ -15,9 +17,7 @@
 #include "output.h"
 #include "cmdline.h"
 
-static int OpenGIFOutput( void );
-static int OpenANMOutput( void );
-static void AddFrameTimeTag( FIBITMAP* Input );
+static void AddFrameTimeTag( FIBITMAP* Input, uint32_t AnimationDelay );
 
 static const char* DitherAlgorithms[ ] = {
     "Floyd-Steinberg",
@@ -31,119 +31,75 @@ static const char* DitherAlgorithms[ ] = {
 
 static FIMULTIBITMAP* OutputGIF = NULL;
 static FILE* OutputFile = NULL;
-static int IsOutputGIF = 0;
-static int FramesWritten = 0;
-static int ShouldWriteHeader = 0;
-static uint32_t AnimationDelay = 0;
-static int Width = 0;
-static int Height = 0;
-static int SizeInBytes = 0;
+
+/*
+ * Allocates space in memory for the output image and
+ * returns a pointer to it.
+ */
+uint8_t* AllocateFramebuffer( int Width, int Height ) {
+    int DisplaySize = ( Width * Height ) / 8;
+    uint8_t* Result = NULL;
+
+    if ( ( Result = ( ( uint8_t* ) malloc( DisplaySize ) ) ) != NULL ) {
+        memset( Result, 0, DisplaySize );
+    }
+
+    return Result;
+}
 
 /*
  * Prompts the user if we should overwrite (Filename).
  * Returns 1 if the user selected Y, otherwise 0.
  */
-static int AskToOverwrite( const char* Filename ) {
+static bool AskToOverwrite( const char* Filename ) {
     printf( "File \"%s\" already exists. Overwrite? (Y/N) ", Filename );
-    return tolower( getchar( ) ) == 'y' ? 1 : 0;
+    return tolower( getchar( ) ) == 'y' ? true : false;
 }
 
-static int OpenGIFOutput( void ) {
+bool OpenGIFOutput( void ) {
     const char* Filename = NULL;
 
     if ( ( Filename = CmdLine_GetOutputFilename( ) ) != NULL ) {
         /* If the file exists and the user does not want to overwrite it, bail */
         if ( access( Filename, F_OK ) == 0 && AskToOverwrite( Filename ) == 0 )
-            return EEXIST;
+            return false;
 
         OutputGIF = FreeImage_OpenMultiBitmap( FIF_GIF, Filename, TRUE, FALSE, FALSE, 0 );
     }
 
-    return OutputGIF != NULL ? 1 : 0;
+    return OutputGIF != NULL ? true : false;
 }
 
-static int OpenANMOutput( void ) {
+void CloseGIFOutput( void ) {
+    if ( OutputGIF != NULL ) {
+        FreeImage_CloseMultiBitmap( OutputGIF, 0 );
+        OutputGIF = NULL;
+    }
+}
+
+bool OpenRawOutput( void ) {
     const char* Filename = NULL;
-    struct ANMHeader Header;
 
     if ( ( Filename = CmdLine_GetOutputFilename( ) ) != NULL ) {
         /* If the file exists and the user does not want to overwrite it, bail */
         if ( access( Filename, F_OK ) == 0 && AskToOverwrite( Filename ) == 0 )
-            return EEXIST;
-
-        OutputFile = fopen( Filename, "wb+" );
-
-        if ( OutputFile && ShouldWriteHeader ) {
-            memset( &Header, 0, sizeof( struct ANMHeader ) );
-
-            Header.Width = Width;
-            Header.Height = Height;
-            Header.DelayBetweenFrames = CmdLine_GetOutputDelay( );
-
-            /* This needs to be updated later when we know how many frames there are */
-            Header.Frames = 0xFFFF;
-
-            fwrite( &Header, 1, sizeof( struct ANMHeader ), OutputFile );
-        }
+            return false;
     }
 
-    return OutputFile != NULL ? 1 : 0;    
+    OutputFile = fopen( Filename, "wb+" );
+    return OutputFile != NULL ? true : false;
 }
 
-int OpenOutput( void ) {
-    IsOutputGIF = AreWeWritingAGIF( );
-    ShouldWriteHeader = CmdLine_GetWriteHeaderFlag( );
-    AnimationDelay = ( uint32_t ) CmdLine_GetOutputDelay( );
-    Width = CmdLine_GetOutputWidth( );
-    Height = CmdLine_GetOutputHeight( );
-    SizeInBytes = ( Width * Height ) / 8;
-
-    return IsOutputGIF ? OpenGIFOutput( ) : OpenANMOutput( );
-}
-
-void CloseOutput( void ) {
-    struct ANMHeader Header;
-
-    if ( IsOutputGIF ) {
-        FreeImage_CloseMultiBitmap( OutputGIF, 0 );
-    } else {
-        if ( ShouldWriteHeader ) {
-            /* Rewind to the beginning of the file and update the header with
-             * the number of frames contained in the file.
-             */
-            fseek( OutputFile, 0, SEEK_SET );
-            fread( &Header, 1, sizeof( struct ANMHeader ), OutputFile );
-
-            Header.Frames = FramesWritten;
-
-            fseek( OutputFile, 0, SEEK_SET );
-            fwrite( &Header, 1, sizeof( struct ANMHeader ), OutputFile );
-        }
-
+void CloseRawOutput( void ) {
+    if ( OutputFile != NULL ) {
+        fflush( OutputFile );
         fclose( OutputFile );
+
+        OutputFile = NULL;
     }
-
-    printf( "Stats for \"%s\":\n", CmdLine_GetOutputFilename( ) );
-    printf( "Format:\t\t%s\n", IsOutputGIF ? "GIF" : "ANM/BIN" );
-
-    if ( IsOutputGIF ) printf( "Header:\t\tGIF\n" );
-    else printf( "Header:\t\t%s\n", ShouldWriteHeader ? "Yes" : "No" );
-
-    printf( "Size:\t\t%dx%d\n", Width, Height );
-    printf( "Frames written:\t%d\n", FramesWritten );
-    printf( "Inverted?\t%s\n", CmdLine_GetInvertFlag( ) ? "Yes" : "No" );
-
-    if ( CmdLine_DitherEnabled( ) ) printf( "Dithering:\t%s\n", DitherAlgorithms[ CmdLine_GetDitherAlgorithm( ) ] );
-    else printf( "Threshold:\t%d\n", CmdLine_GetColorThreshold( ) );
-
-    if ( FramesWritten > 1 )
-        printf( "Frame/ms:\t%d\n", AnimationDelay );
-
-    OutputFile = NULL;
-    OutputGIF = NULL;
 }
 
-static void AddFrameTimeTag( FIBITMAP* Input ) {
+static void AddFrameTimeTag( FIBITMAP* Input, uint32_t AnimationDelay ) {
     FITAG* Tag = NULL;
 
     if ( ( Tag = FreeImage_CreateTag( ) ) != NULL ) {
@@ -157,21 +113,7 @@ static void AddFrameTimeTag( FIBITMAP* Input ) {
     }
 }
 
-void WriteFrame( void* Frame ) {
-    uint8_t* FramebufferFrame = ( uint8_t* ) Frame;
-    FIBITMAP* GIFFrame = ( FIBITMAP* ) Frame;
-
-    if ( IsOutputGIF ) {
-        AddFrameTimeTag( GIFFrame );
-        FreeImage_AppendPage( OutputGIF, GIFFrame );
-    } else {
-        fwrite( FramebufferFrame, 1, SizeInBytes, OutputFile );
-    }
-
-    FramesWritten++;
-}
-
-int AreWeWritingAGIF( void ) {
+bool IsOutputAGIF( void ) {
     const char* OutputFile = NULL;
     int Length = 0;
 
@@ -179,8 +121,27 @@ int AreWeWritingAGIF( void ) {
         Length = strlen( OutputFile );
 
         if ( strcasecmp( &OutputFile[ Length - 4 ], ".gif" ) == 0 )
-            return 1;
+            return true;
     }
 
-    return 0;
+    return false;
+}
+
+bool AddRawFrame( uint8_t* Data, int Width, int Height ) {
+    int DataSize = ( Width * Height ) / 8;
+
+    NullCheck( OutputFile, return false );
+    NullCheck( Data, return false );
+
+    return ( fwrite( Data, 1, DataSize, OutputFile ) == DataSize ) ? true : false;
+}
+
+bool AddGIFFrame( FIBITMAP* Input, uint32_t AnimationDelay ) {
+    NullCheck( OutputGIF, return false );
+    NullCheck( Input, return false );
+
+    AddFrameTimeTag( Input, AnimationDelay );
+    FreeImage_AppendPage( OutputGIF, Input );
+
+    return true;
 }

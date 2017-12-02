@@ -8,35 +8,28 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdint.h>
+#include <stdbool.h>
 #include <FreeImage.h>
 #include <argp.h>
 #include "cmdline.h"
 
-#define DEFAULT_IMAGE_WIDTH 128
-#define DEFAULT_IMAGE_HEIGHT 64
 #define DEFAULT_IMAGE_DELAY 100
-
-#define IMAGE_MAX_WIDTH 128
-#define IMAGE_MAX_HEIGHT 128
 
 static FREE_IMAGE_DITHER ParseDither( const char* DitherText );
 static error_t ParseArgs( int Key, char* Arg, struct argp_state* State );
 
 static FREE_IMAGE_DITHER DitherAlgorithm = FID_FS;
-static int DitherFlag = 0;
-static int InvertFlag = 0;
-static int ThresholdValue = 128;
-static int ImageWidth = DEFAULT_IMAGE_WIDTH;
-static int ImageHeight = DEFAULT_IMAGE_HEIGHT;
-static int Delay = DEFAULT_IMAGE_DELAY;
-static int ShouldWriteHeader = 1;
+static uint32_t Delay = DEFAULT_IMAGE_DELAY;
+static bool ShouldWriteHeader = true;
+static bool DitherFlag = false;
+static bool InvertFlag = false;
+static bool ThresholdValue = 128;
 
 static struct argp_option Options[ ] = {
     { "dither", 'd', "algorithm", OPTION_ARG_OPTIONAL, "Dither output" },
     { "threshold", 't', "value", 0, "Threshold for non dithered output [0-255]" },
     { "invert", 'i', NULL, 0, "Invert output" },
-    { "width", 'w', "width", 0, "Output image width" },
-    { "height", 'h', "height", 0, "Outpt image height" },
     { "delay", 'l', "delay", 0, "Delay between frames in milliseconds" },
     { "noheader", 'n', NULL, 0, "Do not write header, only write raw frames" },
     { NULL }
@@ -121,7 +114,7 @@ static error_t ParseArgs( int Key, char* Arg, struct argp_state* State ) {
     switch ( Key ) {
         case 'd': {
             DitherAlgorithm = ParseDither( Arg );
-            DitherFlag = 1;
+            DitherFlag = true;
 
             if ( DitherAlgorithm == -1 )
                 argp_error( State, "Unknown dithering algorithm: \"%s\"\n", Arg == NULL ? "" : Arg );
@@ -138,25 +131,7 @@ static error_t ParseArgs( int Key, char* Arg, struct argp_state* State ) {
             break;
         }
         case 'i': {
-            InvertFlag = 1;
-            break;
-        }
-        case 'w': {
-            Value = atoi( Arg );
-
-            if ( Value <= 0 || Value > IMAGE_MAX_WIDTH )
-                argp_error( State, "Output width must be between 1 and %d", IMAGE_MAX_WIDTH );
-
-            ImageWidth = Value;
-            break;
-        }
-        case 'h': {
-            Value = atoi( Arg );
-
-            if ( Value <= 0 || Value > IMAGE_MAX_HEIGHT )
-                argp_error( State, "Output height must be between 1 and %d", IMAGE_MAX_HEIGHT );
-
-            ImageHeight = Value;
+            InvertFlag = true;
             break;
         }
         case 'n': {
@@ -189,7 +164,7 @@ FREE_IMAGE_DITHER CmdLine_GetDitherAlgorithm( void ) {
     return DitherAlgorithm;
 }
 
-int CmdLine_DitherEnabled( void ) {
+bool CmdLine_DitherEnabled( void ) {
     return DitherFlag;
 }
 
@@ -209,23 +184,15 @@ int CmdLine_GetInputCount( void ) {
     return FilenameCount > 1 ? FilenameCount - 1 : 1;
 }
 
-int CmdLine_GetInvertFlag( void ) {
+bool CmdLine_GetInvertFlag( void ) {
     return InvertFlag;
 }
 
-int CmdLine_GetOutputWidth( void ) {
-    return ImageWidth;
-}
-
-int CmdLine_GetOutputHeight( void ) {
-    return ImageHeight;
-}
-
-int CmdLine_GetOutputDelay( void ) {
+uint32_t CmdLine_GetOutputDelay( void ) {
     return Delay;
 }
 
-int CmdLine_GetWriteHeaderFlag( void ) {
+bool CmdLine_GetWriteHeaderFlag( void ) {
     return ShouldWriteHeader;
 }
 

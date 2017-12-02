@@ -9,212 +9,192 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <errno.h>
-#include <sys/stat.h>
-#include <unistd.h>
+#include <stdbool.h>
 #include <FreeImage.h>
 #include "cmdline.h"
 #include "output.h"
 
 #define BIT( n ) ( 1 << n )
 
-int AreWeWritingAGIF( void );
-uint8_t* AllocateFramebuffer( void );
-int OpenOutput( void );
-void CloseOutput( void );
-
-static int Display_Width = 0;
-static int Display_Height = 0;
-static int Display_Size = 0;
-
-static int ShouldWriteHeader = 0;
-static int ShouldInvertOutput = 0;
-
 void ErrorHandler( FREE_IMAGE_FORMAT Fmt, const char* Message ) {
     printf( "%s: %s\n", __FUNCTION__, Message );
 }
 
 /*
- * Make1BPP:
- * Converts the input to a 1 bit per pixel monochrome image.
- *
- * Returns: 1 Bit per pixel image.
+ * Opens the given input file (Filename) as an FIBITMAP handle.
+ * OutImageWidth and OutImageHeight MUST point to valid integers to receive
+ * the image width and height.
+ * Width and height of the input image must be divisible by 8.
  */
-FIBITMAP* Make1BPP( FIBITMAP* Input ) {
-    FIBITMAP* Output = NULL;
+FIBITMAP* OpenInputImage( const char* Filename, int* OutImageWidth, int* OutImageHeight ) {
+    FREE_IMAGE_FORMAT InputFormat = FIF_UNKNOWN;
+    FIBITMAP* Input = NULL;
+    int Width = 0;
+    int Height = 0;
 
-    if ( FreeImage_GetBPP( Input ) > 1 ) {
-        if ( CmdLine_DitherEnabled( ) ) {
-            Output = FreeImage_Dither( Input, CmdLine_GetDitherAlgorithm( ) );
+    NullCheck( Filename, return NULL );
+    NullCheck( OutImageWidth, return NULL );
+    NullCheck( OutImageHeight, return NULL );
+
+    InputFormat = FreeImage_GetFIFFromFilename( Filename );
+
+    if ( InputFormat != FIF_UNKNOWN ) {
+        Input = FreeImage_Load( InputFormat, Filename, 0 );
+        
+        if ( Input != NULL ) {
+            *OutImageWidth = FreeImage_GetWidth( Input );
+            *OutImageHeight = FreeImage_GetHeight( Input );
+
+            if ( *OutImageWidth % 8 == 0 && *OutImageHeight % 8 == 0 )
+                return Input;
+
+            printf( "Error: Input image width and height must be divisible by 8.\n" );
+
+            FreeImage_Unload( Input );
+            Input = NULL;
         } else {
-            Output = FreeImage_Threshold( Input, CmdLine_GetColorThreshold( ) );
+            printf( "Error Could not load input file [%s]\n", Filename );
         }
-    } else {
-        /* Do not modify images that are already 1bpp. */
-        Output = Input;
     }
 
-    /* If requested on the command line, invert the output */
-    if ( Output != NULL && ShouldInvertOutput )
-        FreeImage_Invert( Output );
+    return Input;
+}
+
+/*
+ * Checks to see if the input image is already in the correct (1BPP) format
+ * and if it isn't we perform the conversion ourselves.
+ */
+FIBITMAP* PreprocessInput( FIBITMAP* Input ) {
+    FREE_IMAGE_DITHER Algo = FID_FS;
+    FIBITMAP* Output = NULL;
+    int ColorThreshold = 0;
+
+    NullCheck( Input, return NULL );
+
+    if ( FreeImage_GetBPP( Input ) == 1 ) {
+        /* Input is already 1boo, no changes needed */
+        Output = FreeImage_Clone( Input );
+    } else {
+        /* Convert input to 1BPP based on the user's command
+         * line selection or the defaults.
+         */
+        if ( CmdLine_DitherEnabled( ) == 1 ) {
+            Algo = CmdLine_GetDitherAlgorithm( );
+            Output = FreeImage_Dither( Input, Algo );
+        } else {
+            ColorThreshold = CmdLine_GetColorThreshold( );
+            Output = FreeImage_Threshold( Input, ColorThreshold );
+        }
+    }
 
     return Output;
 }
 
 /*
- * VerifyAndLoadInput:
- *
- * Loads the given image file name and verifies that it's the correct dimensions.
- *
- * Returns: FIBITMAP Handle on success, NULL if failed.
+ * Sets (or clears) the pixel at (x,y) for the
+ * SSD1306's horizontal addressing mode.
  */
-FIBITMAP* VerifyAndLoadInput( const char* ImagePath ) {
-    FREE_IMAGE_FORMAT InputFormat = FIF_UNKNOWN;
-    FIBITMAP* Output = NULL;
-    int Height = 0;
-    int Width = 0;
+void SSD1306_SetPixelHorizontal( uint8_t* Output, int x, int y, int ImageWidth, bool Color ) {
+    int BitOffset = ( y & 0x07 );
 
-    if ( ( InputFormat = FreeImage_GetFIFFromFilename( ImagePath ) ) != FIF_UNKNOWN ) {
-        if ( ( Output = FreeImage_Load( InputFormat, ImagePath, 0 ) ) != NULL ) {
-            Height = FreeImage_GetHeight( Output );
-            Width = FreeImage_GetWidth( Output );
+    /* 
+     * Divide the y coordinate by 8 to get which page
+     * the bit we want to set is on.
+     */
+    y>>= 3;
 
-            if ( Width == Display_Width && Height == Display_Height )
-                return Output;
-
-            printf( "[Error] %s: Image size is %dx%d, expected %dx%d\n", __FUNCTION__, Width, Height, Display_Width, Display_Height );
-            FreeImage_Unload( Output );
-        }
+    if ( Color == true ) {
+        Output[ x + ( y * ImageWidth ) ] |= BIT( BitOffset );
+    } else {
+        Output[ x + ( y * ImageWidth ) ] &= ~BIT( BitOffset );
     }
-
-    return NULL;
 }
 
 /*
- * GetPixelIndex:
- *
- * A simple wrapper around FreeImage_GetPixelIndex that just
- * returns the pixel index rather than needing to pass a pointer.
- *
- * Returns: Colour index of pixel at (x), (y)
+ * Converts the input bitmap to an output buffer
+ * formatted for the SSD1306's horizontal addressing mode.
  */
-uint8_t PixelIndex( FIBITMAP* Input, int x, int y ) {
-    uint8_t Index = 0;
-
-    FreeImage_GetPixelIndex( Input, x, y, &Index );
-    return Index;
-}
-
-int SSD1306_Format( FIBITMAP* Input, uint8_t* OutBuffer ) {
-    FIBITMAP* Tile = NULL;
-    uint8_t Temp = 0;
-    int x2 = 0;
+void SSD1306_ConvertHorizontal( FIBITMAP* Input, uint8_t* Output, int Width, int Height ) {
+    uint8_t Color = 0;
     int x = 0;
     int y = 0;
-    int i = 0;
 
-    memset( OutBuffer, 0, Display_Size );
+    NullCheck( Input, return );
+    NullCheck( Output, return );
 
-    if ( Input != NULL ) {
-        /* Slice the image up into 8x8 chunks */
-        for ( y = 0; y < Display_Height; y+= 8 ) {
-            for ( x = 0; x < Display_Width; x+= 8 ) {
-                if ( ( Tile = FreeImage_Copy( Input, x, y, x + 8, y + 8 ) ) != NULL ) {
-                    for ( i = 0; i < 8; i++ ) {
-                        /* Here be dragons */
-                        Temp = PixelIndex( Tile, i, 7 ) & BIT( 0 ) ? BIT( 0 ) : 0;
-                        Temp |= PixelIndex( Tile, i, 6 ) & BIT( 0 ) ? BIT( 1 ) : 0;
-                        Temp |= PixelIndex( Tile, i, 5 ) & BIT( 0 ) ? BIT( 2 ) : 0;
-                        Temp |= PixelIndex( Tile, i, 4 ) & BIT( 0 ) ? BIT( 3 ) : 0;
-                        Temp |= PixelIndex( Tile, i, 3 ) & BIT( 0 ) ? BIT( 4 ) : 0;
-                        Temp |= PixelIndex( Tile, i, 2 ) & BIT( 0 ) ? BIT( 5 ) : 0;
-                        Temp |= PixelIndex( Tile, i, 1 ) & BIT( 0 ) ? BIT( 6 ) : 0;
-                        Temp |= PixelIndex( Tile, i, 0 ) & BIT( 0 ) ? BIT( 7 ) : 0;
+    for ( y = 0; y < Height; y++ ) {
+        for ( x = 0; x < Width; x++ ) {
+            FreeImage_GetPixelIndex( Input, x, y, &Color );
+            SSD1306_SetPixelHorizontal( Output, x, y, Width, ( bool ) Color );
+        }
+    }
+}
 
-                        *OutBuffer++ = Temp;
-                    }
+void Go_GIF( void ) {
+    const char** InputFilenames = NULL;
+    uint32_t AnimationDelay = 0;
+    int NumberOfInputFiles = 0;
+    FIBITMAP* Output = NULL;
+    FIBITMAP* Input = NULL;
+    int FramesWritten = 0;
+    bool Errors = false;
+    int Width = 0;
+    int Height = 0;
+    int i = 0; 
 
-                    FreeImage_Unload( Tile );
-                }
+    NullCheck( CmdLine_GetInputFilenames( ), return );
+    NullCheck( CmdLine_GetOutputFilename( ), return );
+
+    InputFilenames = CmdLine_GetInputFilenames( );
+    NumberOfInputFiles = CmdLine_GetInputCount( );
+    AnimationDelay = CmdLine_GetOutputDelay( );
+
+    for ( i = 0; i < NumberOfInputFiles; i++ ) {
+        Input = OpenInputImage( InputFilenames[ i ], &Width, &Height );
+
+        if ( Input != NULL ) {
+            Output = PreprocessInput( Input );
+
+            if ( Output != NULL ) {
+                AddGIFFrame( Output, AnimationDelay );
+                FreeImage_Unload( Output );
+
+                FramesWritten++;
+            } else {
+                Errors = true;
             }
+
+            FreeImage_Unload( Input );
+        } else {
+            Errors = true;
+
+            /* Always stop on the first error */
+            break;
         }
     }
 
-    return 1;
-}
+    printf( "Wrote %d of %d frame(s) to [%s]\n", FramesWritten, NumberOfInputFiles, CmdLine_GetOutputFilename( ) );
 
-uint8_t* AllocateFramebuffer( void ) {
-    uint8_t* Result = NULL;
-
-    if ( ( Result = ( ( uint8_t* ) malloc( Display_Size ) ) ) != NULL ) {
-        memset( Result, 0, Display_Size );
+    if ( Errors == true ) {
+        printf( "There output file may be incomplete due to errors.\n" );
     }
-
-    return Result;
 }
 
 void Go( void ) {
-    const char** InputFiles = NULL;
-    uint8_t* Framebuffer = NULL;
-    FIBITMAP* ImageBW = NULL;
-    FIBITMAP* Image = NULL;
-    int FramesWritten = 0;
-    int Result = 0;
-    int Count = 0;
-    int i = 0;
+    NullCheck( CmdLine_GetInputFilenames( ), return );
+    NullCheck( CmdLine_GetOutputFilename( ), return );
 
-    if ( ( Framebuffer = AllocateFramebuffer( ) ) == NULL ) {
-        printf( "Error allocating %d bytes for a framebuffer.\n", Display_Size );
-        return;
-    }
-
-    Result = OpenOutput( );
-
-    switch ( Result ) {
-        case EEXIST: {
-            printf( "Cancelled.\n" );
-            return;
+    if ( IsOutputAGIF( ) == true ) {
+        if ( OpenGIFOutput( ) == true ) {
+            Go_GIF( );
+            CloseGIFOutput( );
         }
-        case 0: {
-            printf( "Failed to open \"%s\" for write.\n", CmdLine_GetOutputFilename( ) );
-            return;
-        }
-        default: break;
-    };
-
-    if ( ( InputFiles = CmdLine_GetInputFilenames( ) ) != NULL ) {
-        Count = CmdLine_GetInputCount( );
-
-        printf( "Converting %d input files...\n", Count );
-
-        for ( i = 0; i < Count; i++ ) {
-            /* Make sure the input image is the proper dimensions */
-            if ( ( Image = VerifyAndLoadInput( InputFiles[ i ] ) ) == NULL ) {
-                printf( "Error: VerifyAndLoadInput %s\n", InputFiles[ i ] );
-                break;
-            }
-
-            /* Convert input image to 1 bit per pixel */
-            if ( ( ImageBW = Make1BPP( Image ) ) != NULL ) {
-                if ( AreWeWritingAGIF( ) == 0 ) {
-                    SSD1306_Format( ImageBW, Framebuffer );
-                    WriteFrame( ( void* ) Framebuffer );
-                } else {
-                    WriteFrame( ( void* ) ImageBW );
-                }
-
-                FreeImage_Unload( ImageBW );
-                FramesWritten++;
-            }
-
-            FreeImage_Unload( Image );
+    } else {
+        if ( OpenRawOutput( ) == true ) {
+            //Go_Raw( );
+            CloseRawOutput( );
         }
     }
-
-    //printf( "Wrote %d frame(s) to \"%s\"\n", FramesWritten, CmdLine_GetOutputFilename( ) );
-
-    CloseOutput( );
-    free( Framebuffer );
 }
 
 int main( int Argc, char** Argv ) {
@@ -222,11 +202,6 @@ int main( int Argc, char** Argv ) {
     FreeImage_SetOutputMessage( ErrorHandler );
 
     if ( CmdLine_Handler( Argc, Argv ) == 0 ) {
-        Display_Width = CmdLine_GetOutputWidth( );
-        Display_Height = CmdLine_GetOutputHeight( );
-        Display_Size = ( Display_Width * Display_Height ) / 8;
-        ShouldInvertOutput = CmdLine_GetInvertFlag( );
-
         Go( );
         CmdLine_Free( );
     }
