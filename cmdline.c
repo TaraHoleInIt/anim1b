@@ -22,9 +22,10 @@ static error_t ParseArgs( int Key, char* Arg, struct argp_state* State );
 static FREE_IMAGE_DITHER DitherAlgorithm = FID_FS;
 static uint32_t Delay = DEFAULT_IMAGE_DELAY;
 static bool ShouldWriteHeader = true;
+static char* OutputFilename = NULL;
+static int ThresholdValue = 128;
 static bool DitherFlag = false;
 static bool InvertFlag = false;
-static int ThresholdValue = 128;
 
 static struct argp_option Options[ ] = {
     { "dither", 'd', "algorithm", OPTION_ARG_OPTIONAL, "Dither output" },
@@ -32,6 +33,7 @@ static struct argp_option Options[ ] = {
     { "invert", 'i', NULL, 0, "Invert output" },
     { "delay", 'l', "delay", 0, "Delay between frames in milliseconds" },
     { "noheader", 'n', NULL, 0, "Do not write header, only write raw frames" },
+    { "output", 'o', "output", 0, "Output file name" },
     { NULL }
 };
 
@@ -48,7 +50,7 @@ static char Documentation[ ] = "anim1b: Image to SSD1306 converter" \
     "  c16x16   Cluster 16x16\n\n" \
 ;
 
-static char ArgsDocumentation[ ] = "images output";
+static char ArgsDocumentation[ ] = "[input images]";
 
 static struct argp P = {
     Options, ParseArgs, ArgsDocumentation, Documentation
@@ -144,15 +146,24 @@ static error_t ParseArgs( int Key, char* Arg, struct argp_state* State ) {
             Delay = atoi( Arg );
             break;
         }
+        case 'o': {
+            OutputFilename = Arg;
+            break;
+        }
         case ARGP_KEY_ARG: {
             /* Add another input file to the list */
             AddInputFile( Arg );
             break;
         }
         case ARGP_KEY_END: {
-            /* Bail unless we at least have one input and output */
-            if ( State->arg_num < 2 )
+            /* Make sure an output file name was passed in as an argument */
+            if ( OutputFilename == NULL ) {
+                argp_error( State, "You must specify --output=filename" );
+            }
+
+            if ( State->arg_num < 2 ) {
                 argp_usage( State );
+            }
 
             break;
         }
@@ -179,11 +190,11 @@ const char** CmdLine_GetInputFilenames( void ) {
 }
 
 const char* CmdLine_GetOutputFilename( void ) {
-    return ( Filenames && Filenames[ FilenameCount - 1 ] ) ? Filenames[ FilenameCount - 1 ] : NULL;
+    return OutputFilename;
 }
 
 int CmdLine_GetInputCount( void ) {
-    return FilenameCount > 1 ? FilenameCount - 1 : 1;
+    return FilenameCount;
 }
 
 bool CmdLine_GetInvertFlag( void ) {
