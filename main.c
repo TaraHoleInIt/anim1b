@@ -103,6 +103,11 @@ void SSD1306_SetPixelHorizontal( uint8_t* Output, int x, int y, int ImageWidth, 
      */
     y>>= 3;
 
+    /* Invert color if command line option set */
+    if ( CmdLine_GetInvertFlag( ) == true ) {
+        Color = ! Color;
+    }
+
     if ( Color == true ) {
         Output[ x + ( y * ImageWidth ) ] |= BIT( BitOffset );
     } else {
@@ -156,6 +161,11 @@ void Go_GIF( void ) {
             Output = PreprocessInput( Input );
 
             if ( Output != NULL ) {
+                /* If requested on the command line, invert the output image */
+                if ( CmdLine_GetInvertFlag( ) == true ) {
+                    FreeImage_Invert( Output );
+                }
+
                 AddGIFFrame( Output, AnimationDelay );
                 FreeImage_Unload( Output );
 
