@@ -72,13 +72,13 @@ FIBITMAP* PreprocessInput( FIBITMAP* Input ) {
     NullCheck( Input, return NULL );
 
     if ( FreeImage_GetBPP( Input ) == 1 ) {
-        /* Input is already 1boo, no changes needed */
+        /* Input is already 1bpp, no changes needed */
         Output = FreeImage_Clone( Input );
     } else {
         /* Convert input to 1BPP based on the user's command
          * line selection or the defaults.
          */
-        if ( CmdLine_DitherEnabled( ) == 1 ) {
+        if ( CmdLine_DitherEnabled( ) == true ) {
             Algo = CmdLine_GetDitherAlgorithm( );
             Output = FreeImage_Dither( Input, Algo );
         } else {

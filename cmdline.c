@@ -24,7 +24,7 @@ static uint32_t Delay = DEFAULT_IMAGE_DELAY;
 static bool ShouldWriteHeader = true;
 static bool DitherFlag = false;
 static bool InvertFlag = false;
-static bool ThresholdValue = 128;
+static int ThresholdValue = 128;
 
 static struct argp_option Options[ ] = {
     { "dither", 'd', "algorithm", OPTION_ARG_OPTIONAL, "Dither output" },
@@ -128,6 +128,8 @@ static error_t ParseArgs( int Key, char* Arg, struct argp_state* State ) {
                 argp_error( State, "Threshold out of range, expected 0-255 got %d", Value );
 
             ThresholdValue = Value;
+            DitherFlag = false;
+
             break;
         }
         case 'i': {
