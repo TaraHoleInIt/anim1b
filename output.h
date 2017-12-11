@@ -19,18 +19,44 @@
     } \
 }
 
-typedef enum {
-    AddressMode_Horizontal = 0,
-    AddressMode_Vertical
-} SSD1306_AddressMode;
+enum {
+    Format_1306_Horizontal = 0,
+    Format_1306_Vertical,
+    Format_Linear
+};
+
+struct ANM0_Header {
+    /* ANM Header word:
+     * Always starts with ANM with the last
+     * byte being the header version.
+     * The first version being ANM0
+     */
+    uint32_t ANMId;
+
+    /* How the image is layed out in memory */
+    uint8_t AddressMode;
+
+    /* Unused (for now) */
+    uint8_t CompressionType;
+
+    /* Number of frames in this file, 1 if a single image */
+    uint16_t FrameCount;
+
+    /* Delay in milliseconds to wait before showing the next frame */
+    uint16_t DelayBetweenFrames;
+
+    uint16_t Width;
+    uint16_t Height;
+
+    uint16_t Reserved;
+};
 
 bool IsOutputAGIF( void );
-bool OpenGIFOutput( void );
-void CloseGIFOutput( void );
-bool AddGIFFrame( FIBITMAP* Input, uint32_t AnimationDelay );
+bool IsOutputANM( void );
 
-bool OpenRawOutput( void );
-void CloseRawOutput( void );
-bool AddRawFrame( uint8_t* Data, int Width, int Height );
+void SetOutputParameters( int Width, int Height );
+bool OpenOutputFile( void );
+void CloseOutputFile( void );
+bool WriteOutputFile( void* Data );
 
 #endif

@@ -12,14 +12,18 @@
 #include <stdbool.h>
 #include <FreeImage.h>
 #include <argp.h>
+#include <errno.h>
 #include "cmdline.h"
+#include "output.h"
 
 #define DEFAULT_IMAGE_DELAY 100
 
 static FREE_IMAGE_DITHER ParseDither( const char* DitherText );
+static int ParseOutputFormat( const char* FormatString );
 static error_t ParseArgs( int Key, char* Arg, struct argp_state* State );
 
 static FREE_IMAGE_DITHER DitherAlgorithm = FID_FS;
+static int OutputFormat = Format_1306_Horizontal;
 static uint32_t Delay = DEFAULT_IMAGE_DELAY;
 static bool ShouldWriteHeader = true;
 static char* OutputFilename = NULL;
@@ -34,6 +38,7 @@ static struct argp_option Options[ ] = {
     { "delay", 'l', "delay", 0, "Delay between frames in milliseconds" },
     { "noheader", 'n', NULL, 0, "Do not write header, only write raw frames" },
     { "output", 'o', "output", 0, "Output file name" },
+    { "format", 'f', "format", 0, "Image output format" },
     { NULL }
 };
 
@@ -47,7 +52,12 @@ static char Documentation[ ] = "anim1b: Image to SSD1306 converter" \
     "  b16x16   Bayer 16x16\n" \
     "  c6x6     Cluster 6x6\n" \
     "  c8x8     Cluster 8x8\n" \
-    "  c16x16   Cluster 16x16\n\n" \
+    "  c16x16   Cluster 16x16\n" \
+    "\v" \
+    "Supported output formats: \n" \
+    "  1306_horizontal  SSD1306 Horizontal address mode\n" \
+    "  1306_vertical    SSD1306 Vertical address mode\n" \
+    "  linear           Flat, linear 1BPP image data\n\n" \
 ;
 
 static char ArgsDocumentation[ ] = "[input images]";
@@ -89,6 +99,26 @@ static FREE_IMAGE_DITHER ParseDither( const char* DitherText ) {
     return Result;
 }
 
+/*
+ * Returns a numerical output format from the given string.
+ * Returns -1 if it's not valid.
+ */
+static int ParseOutputFormat( const char* FormatString ) {
+    int Result = -1;
+
+    if ( strcasecmp( FormatString, "1306_horizontal" ) == 0 ) {
+        Result = Format_1306_Horizontal;
+    } else if ( strcasecmp( FormatString, "1306_vertical" ) == 0 ) {
+        Result = Format_1306_Vertical;
+    } else if ( strcasecmp( FormatString, "linear" ) == 0 ) {
+        Result = Format_Linear;
+    } else {
+        Result = -1;
+    }
+
+    return Result;
+}
+
 char* AddInputFile( const char* Filename ) {
     char* Result = NULL;
     int Len = 0;
@@ -111,8 +141,6 @@ char* AddInputFile( const char* Filename ) {
  * Callback for argp command line parsing.
  */
 static error_t ParseArgs( int Key, char* Arg, struct argp_state* State ) {
-    int Value = 0;
-
     switch ( Key ) {
         case 'd': {
             DitherAlgorithm = ParseDither( Arg );
@@ -124,13 +152,19 @@ static error_t ParseArgs( int Key, char* Arg, struct argp_state* State ) {
             break;
         }
         case 't': {
-            Value = atoi( Arg );
+            if ( Arg != NULL ) {
+                ThresholdValue = ( int ) strtol( Arg, NULL, 10 );
 
-            if ( Value < 0 || Value > 255 )
-                argp_error( State, "Threshold out of range, expected 0-255 got %d", Value );
+                if ( errno == EINVAL || errno == ERANGE ) {
+                    argp_error( State, "Invalid threshold value: %s", Arg );
+                }
 
-            ThresholdValue = Value;
-            DitherFlag = false;
+                if ( ThresholdValue < 0 || ThresholdValue > 255 ) {
+                    argp_error( State, "Threshold out of range, expected 0-255 got %d", ThresholdValue );                
+                }
+
+                DitherFlag = false;
+            }
 
             break;
         }
@@ -139,15 +173,33 @@ static error_t ParseArgs( int Key, char* Arg, struct argp_state* State ) {
             break;
         }
         case 'n': {
-            ShouldWriteHeader = 0;
+            ShouldWriteHeader = false;
             break;
         }
         case 'l': {
-            Delay = atoi( Arg );
+            if ( Arg != NULL ) {
+                Delay = ( int ) strtol( Arg, NULL, 10 );
+
+                if ( errno == EINVAL || errno == ERANGE ) {
+                    argp_error( State, "Invalid delay value: %s", Arg );
+                }
+            }
+
             break;
         }
         case 'o': {
             OutputFilename = Arg;
+            break;
+        }
+        case 'f': {
+            if ( Arg != NULL ) {
+                OutputFormat = ParseOutputFormat( Arg );
+
+                if ( OutputFormat == -1 ) {
+                    argp_error( State, "Unknown output format: %s", Arg );
+                }
+            }
+
             break;
         }
         case ARGP_KEY_ARG: {
@@ -171,6 +223,10 @@ static error_t ParseArgs( int Key, char* Arg, struct argp_state* State ) {
     }
 
     return 0;
+}
+
+int CmdLine_GetOutputFormat( void ) {
+    return OutputFormat;
 }
 
 FREE_IMAGE_DITHER CmdLine_GetDitherAlgorithm( void ) {

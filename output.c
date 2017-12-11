@@ -19,6 +19,18 @@
 
 static void AddFrameTimeTag( FIBITMAP* Input, uint32_t AnimationDelay );
 
+static bool OpenGIFOutput( void );
+static void CloseGIFOutput( void );
+static bool AddGIFFrame( FIBITMAP* Input, uint32_t AnimationDelay );
+
+static bool OpenRawOutput( void );
+static void CloseRawOutput( void );
+static bool AddRawFrame( uint8_t* Data );
+
+static bool OpenANMOutput( void );
+static bool AddANMFrame( uint8_t* Data );
+static void CloseANMOutput( void );
+
 static const char* DitherAlgorithms[ ] = {
     "Floyd-Steinberg",
     "Bayer 4x4",
@@ -31,6 +43,16 @@ static const char* DitherAlgorithms[ ] = {
 
 static FIMULTIBITMAP* OutputGIF = NULL;
 static FILE* OutputFile = NULL;
+
+static int OutputWidth = 0;
+static int OutputHeight = 0;
+static int OutputFormat = 0;
+static int FramesWritten = 0;
+
+void SetOutputParameters( int Width, int Height ) {
+    OutputWidth = Width;
+    OutputHeight = Height;
+}
 
 /*
  * Allocates space in memory for the output image and
@@ -52,8 +74,13 @@ uint8_t* AllocateFramebuffer( int Width, int Height ) {
  * Returns 1 if the user selected Y, otherwise 0.
  */
 static bool AskToOverwrite( const char* Filename ) {
+    int Result = 0;
+
     printf( "File \"%s\" already exists. Overwrite? (Y/N) ", Filename );
-    return tolower( getchar( ) ) == 'y' ? true : false;
+        Result = tolower( getchar( ) );
+    printf( "\n" );
+
+    return ( Result == 'y' ) ? true : false;
 }
 
 bool OpenGIFOutput( void ) {
@@ -86,7 +113,9 @@ bool OpenRawOutput( void ) {
             return false;
     }
 
+    OutputFormat = CmdLine_GetOutputFormat( );
     OutputFile = fopen( Filename, "wb+" );
+
     return OutputFile != NULL ? true : false;
 }
 
@@ -127,13 +156,33 @@ bool IsOutputAGIF( void ) {
     return false;
 }
 
-bool AddRawFrame( uint8_t* Data, int Width, int Height ) {
-    int DataSize = ( Width * Height ) / 8;
+bool IsOutputANM( void ) {
+    const char* Filename = NULL;
+    int Length = 0;
+
+    if ( ( Filename = CmdLine_GetOutputFilename( ) ) != NULL ) {
+        Length = strlen( Filename );
+
+        if ( strcasecmp( &Filename[ Length - 4 ], ".anm" ) == 0 ) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool AddRawFrame( uint8_t* Data ) {
+    int DataSize = ( OutputWidth * OutputHeight ) / 8;
 
     NullCheck( OutputFile, return false );
     NullCheck( Data, return false );
 
-    return ( fwrite( Data, 1, DataSize, OutputFile ) == DataSize ) ? true : false;
+    if ( fwrite( Data, 1, DataSize, OutputFile ) == DataSize ) {
+        FramesWritten++;
+        return true;
+    }
+
+    return false;
 }
 
 bool AddGIFFrame( FIBITMAP* Input, uint32_t AnimationDelay ) {
@@ -144,4 +193,86 @@ bool AddGIFFrame( FIBITMAP* Input, uint32_t AnimationDelay ) {
     FreeImage_AppendPage( OutputGIF, Input );
 
     return true;
+}
+
+bool OpenANMOutput( void ) {
+    struct ANM0_Header Header;
+
+    if ( OpenRawOutput( ) == true ) {
+        memset( &Header, 0, sizeof( struct ANM0_Header ) );
+        
+        if ( fwrite( &Header, 1, sizeof( struct ANM0_Header ), OutputFile ) == sizeof( struct ANM0_Header ) ) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool AddANMFrame( uint8_t* Data ) {
+    return AddRawFrame( Data );
+}
+
+#define MakeWord( a, b, c, d ) ( \
+    ( d << 24 ) | \
+    ( c << 16 ) | \
+    ( b << 8 ) | \
+    ( a ) \
+)
+
+void CloseANMOutput( void ) {
+    struct ANM0_Header Header;
+
+    NullCheck( OutputFile, return );
+
+    fseek( OutputFile, 0, SEEK_SET );
+        fread( &Header, sizeof( struct ANM0_Header ), 1, OutputFile );
+    fseek( OutputFile, 0, SEEK_SET );
+
+    Header.ANMId = MakeWord( 'A', 'N', 'M', '0' );
+    Header.AddressMode = ( uint8_t ) OutputFormat;
+    Header.CompressionType = 0;
+    Header.FrameCount = ( uint16_t ) FramesWritten;
+    Header.DelayBetweenFrames = ( uint16_t ) CmdLine_GetOutputDelay( );
+    Header.Width = ( uint16_t ) OutputWidth;
+    Header.Height = ( uint16_t ) OutputHeight;
+    Header.Reserved = 0;
+
+    fwrite( &Header, 1, sizeof( struct ANM0_Header ), OutputFile );
+    CloseRawOutput( );
+}
+
+bool OpenOutputFile( void ) {
+    if ( IsOutputAGIF( ) == true ) {
+        return OpenGIFOutput( );
+    } else if ( IsOutputANM( ) == true ) {
+        return OpenANMOutput( );
+    } else {
+    }
+
+    return OpenRawOutput( );
+}
+
+void CloseOutputFile( void ) {
+    if ( IsOutputAGIF( ) == true ) {
+        CloseGIFOutput( );
+    } else if ( IsOutputANM( ) == true ) {
+        CloseANMOutput( );
+    } else {
+        CloseRawOutput( );
+    }
+}
+
+bool WriteOutputFile( void* Data ) {
+    if ( IsOutputAGIF( ) == true ) {
+        return AddGIFFrame( ( FIBITMAP* ) Data, CmdLine_GetOutputDelay( ) );
+    } else if ( IsOutputANM( ) == true ) {
+        /* TODO:
+         * Later revisions may add an individual frame header?
+         */
+        return AddRawFrame( ( uint8_t* ) Data );
+    } else {
+    }
+
+    return AddRawFrame( ( uint8_t* ) Data );
 }

@@ -1,6 +1,7 @@
 #ifndef _CMDLINE_H_
 #define _CMDLINE_H_
 
+int CmdLine_GetOutputFormat( void );
 FREE_IMAGE_DITHER CmdLine_GetDitherAlgorithm( void );
 bool CmdLine_DitherEnabled( void );
 int CmdLine_GetColorThreshold( void );

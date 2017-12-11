@@ -64,12 +64,17 @@ FIBITMAP* OpenInputImage( const char* Filename, int* OutImageWidth, int* OutImag
  * Checks to see if the input image is already in the correct (1BPP) format
  * and if it isn't we perform the conversion ourselves.
  */
-FIBITMAP* PreprocessInput( FIBITMAP* Input ) {
+FIBITMAP* GetProcessedOutput( FIBITMAP* Input ) {
     FREE_IMAGE_DITHER Algo = FID_FS;
     FIBITMAP* Output = NULL;
     int ColorThreshold = 0;
 
     NullCheck( Input, return NULL );
+
+    /* If requested, invert the colours on the input image data */
+    if ( CmdLine_GetInvertFlag( ) == true ) {
+        FreeImage_Invert( Input );
+    }
 
     if ( FreeImage_GetBPP( Input ) == 1 ) {
         /* Input is already 1bpp, no changes needed */
@@ -135,76 +140,131 @@ void SSD1306_ConvertHorizontal( FIBITMAP* Input, uint8_t* Output, int Width, int
     }
 }
 
-void Go_GIF( void ) {
-    const char** InputFilenames = NULL;
-    uint32_t AnimationDelay = 0;
-    int NumberOfInputFiles = 0;
-    FIBITMAP* Output = NULL;
-    FIBITMAP* Input = NULL;
-    int FramesWritten = 0;
-    bool Errors = false;
-    int Width = 0;
-    int Height = 0;
-    int i = 0; 
-
-    NullCheck( CmdLine_GetInputFilenames( ), return );
-    NullCheck( CmdLine_GetOutputFilename( ), return );
-
-    InputFilenames = CmdLine_GetInputFilenames( );
-    NumberOfInputFiles = CmdLine_GetInputCount( );
-    AnimationDelay = CmdLine_GetOutputDelay( );
-
-    for ( i = 0; i < NumberOfInputFiles; i++ ) {
-        Input = OpenInputImage( InputFilenames[ i ], &Width, &Height );
-
-        if ( Input != NULL ) {
-            Output = PreprocessInput( Input );
-
-            if ( Output != NULL ) {
-                /* If requested on the command line, invert the output image */
-                if ( CmdLine_GetInvertFlag( ) == true ) {
-                    FreeImage_Invert( Output );
-                }
-
-                AddGIFFrame( Output, AnimationDelay );
-                FreeImage_Unload( Output );
-
-                FramesWritten++;
-            } else {
-                Errors = true;
-            }
-
-            FreeImage_Unload( Input );
-        } else {
-            Errors = true;
-
-            /* Always stop on the first error */
+void DoOutputConversion( FIBITMAP* Input, uint8_t* Output, int Width, int Height ) {
+    switch ( CmdLine_GetOutputFormat( ) ) {
+        case Format_1306_Horizontal: {
+            SSD1306_ConvertHorizontal( Input, Output, Width, Height );
             break;
         }
-    }
-
-    printf( "Wrote %d of %d frame(s) to [%s]\n", FramesWritten, NumberOfInputFiles, CmdLine_GetOutputFilename( ) );
-
-    if ( Errors == true ) {
-        printf( "There output file may be incomplete due to errors.\n" );
-    }
+        case Format_1306_Vertical: {
+            printf( "TODO: Not yet done.\n" );
+            break;
+        }
+        case Format_Linear: {
+            printf( "TODO: Not yet done.\n" );
+            break;
+        }
+        default: {
+            printf( "Unknown output format.\n" );
+            break;
+        }
+    };
 }
 
-void Go( void ) {
-    NullCheck( CmdLine_GetInputFilenames( ), return );
-    NullCheck( CmdLine_GetOutputFilename( ), return );
+void ProcessFiles( void ) {
+    const char** InputFilenames = NULL;
+    const char* OutputFilename = NULL;
+    uint8_t* OutputFramebuffer = NULL;
+    FIBITMAP* OutputBitmap = NULL;
+    FIBITMAP* InputBitmap = NULL;
+    int InputFileCount = 0;
+    int FramesWritten = 0;
+    int InputWidth = 0;
+    int InputHeight = 0;
+    int OutputWidth = 0;
+    int OutputHeight = 0;   
+    bool Errors = false;
+    int i = 0;
 
-    if ( IsOutputAGIF( ) == true ) {
-        if ( OpenGIFOutput( ) == true ) {
-            Go_GIF( );
-            CloseGIFOutput( );
+    InputFilenames = CmdLine_GetInputFilenames( );
+    OutputFilename = CmdLine_GetOutputFilename( );
+    InputFileCount = CmdLine_GetInputCount( );
+
+    NullCheck( InputFilenames, return );
+    NullCheck( OutputFilename, return );
+
+    for ( i = 0; i < InputFileCount; i++ ) {
+        /* Make sure we successfully open the input image, if we don't then just bail immediately */
+        if ( ( InputBitmap = OpenInputImage( InputFilenames[ i ], &InputWidth, &InputHeight ) ) == NULL ) {
+            printf( "Failed to open image %s\n", InputFilenames[ i ] );
+
+            Errors = true;
+            break;
         }
-    } else {
-        if ( OpenRawOutput( ) == true ) {
-            //Go_Raw( );
-            CloseRawOutput( );
+
+        /* Small setup bits at the start */
+        if ( i == 0 ) {
+            SetOutputParameters( InputWidth, InputHeight );
+
+            OutputWidth = InputWidth;
+            OutputHeight = InputHeight;
+
+            /* RAW And ANM modes require working on a 1bpp framebuffer so we need
+             * to allocate one of the proper size ourselves here.
+             */
+            if ( ( OutputFramebuffer = ( uint8_t* ) malloc( ( InputWidth * InputHeight ) / 8 ) ) == NULL ) {
+                printf( "Failed to allocate an output framebuffer.\n" );
+
+                Errors = true;
+                break;
+            }
+
+            /* Ditto */
+            if ( OpenOutputFile( ) == false ) {
+                printf( "Failed to open output file %s\n", OutputFilename );
+
+                Errors = true;
+                break;
+            }            
         }
+
+        /* If the current image is not the same size as the first image then write a warning
+         * and move onto the next image.
+         */
+        if ( InputWidth != OutputWidth || InputHeight != OutputHeight ) {
+            printf( "Image %s has a size of %dx%d when we expected %dx%d. Skipping.\n", 
+                InputFilenames[ i ],
+                InputWidth,
+                InputHeight,
+                OutputWidth,
+                OutputHeight
+            );
+
+            Errors = true;
+            continue;
+        }
+
+        /* This really should never fail, but if it does try to keep going anyway */
+        if ( ( OutputBitmap = GetProcessedOutput( InputBitmap ) ) == NULL ) {
+            printf( "Failed to convert image %s. Skipping.\n", InputFilenames[ i ] );
+
+            Errors = true;
+            continue;
+        }
+
+        if ( IsOutputAGIF( ) == false ) {
+            /* Do special format conversions for RAW/ANM output */
+            DoOutputConversion( OutputBitmap, OutputFramebuffer, OutputWidth, OutputHeight );
+            WriteOutputFile( OutputFramebuffer );
+        } else {
+            /* Straight through for GIFs */
+            WriteOutputFile( ( void* ) OutputBitmap );
+        }
+
+        FreeImage_Unload( InputBitmap );
+        FreeImage_Unload( OutputBitmap );
+
+        FramesWritten++;
     }
+
+    printf( "Done. Processed %d of %d input images.\n", FramesWritten, InputFileCount );
+    printf( "%s", ( Errors == true ) ? "There were errors during the conversion.\n" : "" );
+
+    if ( OutputFramebuffer != NULL ) {
+        free( OutputFramebuffer );
+    }
+
+    CloseOutputFile( );
 }
 
 int main( int Argc, char** Argv ) {
@@ -212,7 +272,7 @@ int main( int Argc, char** Argv ) {
     FreeImage_SetOutputMessage( ErrorHandler );
 
     if ( CmdLine_Handler( Argc, Argv ) == 0 ) {
-        Go( );
+        ProcessFiles( );
         CmdLine_Free( );
     }
 
