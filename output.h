@@ -51,6 +51,8 @@ struct ANM0_Header {
     uint16_t Reserved;
 };
 
+bool DidUserCancel( void );
+
 bool IsOutputAGIF( void );
 bool IsOutputANM( void );
 

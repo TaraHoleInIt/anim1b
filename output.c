@@ -49,6 +49,12 @@ static int OutputHeight = 0;
 static int OutputFormat = 0;
 static int FramesWritten = 0;
 
+static bool UserCancel = false;
+
+bool DidUserCancel( void ) {
+    return UserCancel;
+}
+
 void SetOutputParameters( int Width, int Height ) {
     OutputWidth = Width;
     OutputHeight = Height;
@@ -78,6 +84,7 @@ static bool AskToOverwrite( const char* Filename ) {
 
     printf( "File \"%s\" already exists. Overwrite? (Y/N) ", Filename );
         Result = tolower( getchar( ) );
+        UserCancel = ( Result == 'y' ) ? false : true;
     printf( "\n" );
 
     return ( Result == 'y' ) ? true : false;
@@ -223,23 +230,23 @@ bool AddANMFrame( uint8_t* Data ) {
 void CloseANMOutput( void ) {
     struct ANM0_Header Header;
 
-    NullCheck( OutputFile, return );
+    if ( OutputFile != NULL ) {
+        fseek( OutputFile, 0, SEEK_SET );
+            fread( &Header, sizeof( struct ANM0_Header ), 1, OutputFile );
+        fseek( OutputFile, 0, SEEK_SET );
 
-    fseek( OutputFile, 0, SEEK_SET );
-        fread( &Header, sizeof( struct ANM0_Header ), 1, OutputFile );
-    fseek( OutputFile, 0, SEEK_SET );
+        Header.ANMId = MakeWord( 'A', 'N', 'M', '0' );
+        Header.AddressMode = ( uint8_t ) OutputFormat;
+        Header.CompressionType = 0;
+        Header.FrameCount = ( uint16_t ) FramesWritten;
+        Header.DelayBetweenFrames = ( uint16_t ) CmdLine_GetOutputDelay( );
+        Header.Width = ( uint16_t ) OutputWidth;
+        Header.Height = ( uint16_t ) OutputHeight;
+        Header.Reserved = 0;
 
-    Header.ANMId = MakeWord( 'A', 'N', 'M', '0' );
-    Header.AddressMode = ( uint8_t ) OutputFormat;
-    Header.CompressionType = 0;
-    Header.FrameCount = ( uint16_t ) FramesWritten;
-    Header.DelayBetweenFrames = ( uint16_t ) CmdLine_GetOutputDelay( );
-    Header.Width = ( uint16_t ) OutputWidth;
-    Header.Height = ( uint16_t ) OutputHeight;
-    Header.Reserved = 0;
-
-    fwrite( &Header, 1, sizeof( struct ANM0_Header ), OutputFile );
-    CloseRawOutput( );
+        fwrite( &Header, 1, sizeof( struct ANM0_Header ), OutputFile );
+        CloseRawOutput( );
+    }
 }
 
 bool OpenOutputFile( void ) {

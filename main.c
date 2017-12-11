@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <errno.h>
 #include <FreeImage.h>
 #include "cmdline.h"
 #include "output.h"
@@ -52,8 +53,6 @@ FIBITMAP* OpenInputImage( const char* Filename, int* OutImageWidth, int* OutImag
 
             FreeImage_Unload( Input );
             Input = NULL;
-        } else {
-            printf( "Error Could not load input file [%s]\n", Filename );
         }
     }
 
@@ -199,6 +198,16 @@ void ProcessFiles( void ) {
             OutputWidth = InputWidth;
             OutputHeight = InputHeight;
 
+            /* Ditto */
+            if ( OpenOutputFile( ) == false ) {
+                if ( DidUserCancel( ) == false ) {
+                    printf( "Failed to open output file: %s\n", strerror( errno ) );
+                    Errors = true;
+                }
+                
+                break;
+            }     
+
             /* RAW And ANM modes require working on a 1bpp framebuffer so we need
              * to allocate one of the proper size ourselves here.
              */
@@ -207,15 +216,7 @@ void ProcessFiles( void ) {
 
                 Errors = true;
                 break;
-            }
-
-            /* Ditto */
-            if ( OpenOutputFile( ) == false ) {
-                printf( "Failed to open output file %s\n", OutputFilename );
-
-                Errors = true;
-                break;
-            }            
+            }       
         }
 
         /* If the current image is not the same size as the first image then write a warning
@@ -257,8 +258,11 @@ void ProcessFiles( void ) {
         FramesWritten++;
     }
 
-    printf( "Done. Processed %d of %d input images.\n", FramesWritten, InputFileCount );
-    printf( "%s", ( Errors == true ) ? "There were errors during the conversion.\n" : "" );
+    printf( "Processed %d of %d input images.\n", FramesWritten, InputFileCount );
+    
+    if ( Errors == true ) {
+        printf( "There were errors during the conversion.\nOutput file may be incomplete or invalid.\n" );
+    }
 
     if ( OutputFramebuffer != NULL ) {
         free( OutputFramebuffer );
