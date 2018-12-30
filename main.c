@@ -97,27 +97,31 @@ FIBITMAP* GetProcessedOutput( FIBITMAP* Input ) {
  * Sets (or clears) the pixel at (x,y) for the
  * SSD1306's horizontal addressing mode.
  */
-void SetPixelHorizontal( uint8_t* Output, int x, int y, int ImageWidth, bool Color ) {
+void SetPixelHorizontal( uint8_t* Output, int x, int y, int ImageWidth, int ImageHeight, bool Color ) {
     int PixelOffset = x + ( ( y / 8 ) * ImageWidth );
     int BitOffset = ( y & 0x07 );
+
+    ( void ) ImageHeight;
 
     Output[ PixelOffset ] = ( Color == true ) ? Output[ PixelOffset ] | BIT( BitOffset ) : Output[ PixelOffset ] & ~BIT( BitOffset );
 }
 
-void SetPixelVertical( uint8_t* Output, int x, int y, int ImageWidth, bool Color ) {
+void SetPixelVertical( uint8_t* Output, int x, int y, int ImageWidth, int ImageHeight, bool Color ) {
     int BitOffset = ( y & 0x07 );
     int PageOffset = ( y / 8 );
     int PixelOffset = 0;
 
     ( void ) ImageWidth;
 
-    PixelOffset = ( x * 8 ) + PageOffset;
+    PixelOffset = ( x * ( ImageHeight / 8 ) ) + PageOffset;
     Output[ PixelOffset ] = ( Color == true ) ? ( Output[ PixelOffset ] | BIT( BitOffset ) ) : ( Output[ PixelOffset ] & ~BIT( BitOffset ) );
 }
 
-void SetPixelLinear( uint8_t* Output, int x, int y, int ImageWidth, bool Color ) {
+void SetPixelLinear( uint8_t* Output, int x, int y, int ImageWidth, int ImageHeight, bool Color ) {
     int BitOffset = 7 - ( x & 0x07 );
     int PixelOffset = 0;
+
+    ( void ) ImageHeight;
 
     PixelOffset = y * ( ImageWidth / 8 );
     PixelOffset+= ( x / 8 );
@@ -126,7 +130,7 @@ void SetPixelLinear( uint8_t* Output, int x, int y, int ImageWidth, bool Color )
 }
 
 void DoOutputConversion( FIBITMAP* Input, uint8_t* Output, int Width, int Height ) {
-    void ( *SetPixelFn ) ( uint8_t* Output, int x, int y, int ImageWidth, bool Color ) = NULL;
+    void ( *SetPixelFn ) ( uint8_t* Output, int x, int y, int ImageWidth, int ImageHeight, bool Color ) = NULL;
     uint8_t Color = 0;
     int x = 0;
     int y = 0;
@@ -150,7 +154,7 @@ void DoOutputConversion( FIBITMAP* Input, uint8_t* Output, int Width, int Height
     for ( x = 0; x < Width; x++ ) {
         for ( y = 0; y < Height; y++ ) {
             FreeImage_GetPixelIndex( Input, x, y, &Color );
-            SetPixelFn( Output, x, y, Width, Color );
+            SetPixelFn( Output, x, y, Width, Height, Color );
         }
     }
 }
