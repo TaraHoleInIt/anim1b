@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2017 Tara Keeling
+ * Copyright (c) 2017-2018 Tara Keeling
  * 
  * This software is released under the MIT License.
  * https://opensource.org/licenses/MIT
@@ -31,6 +31,7 @@ static bool OpenANMOutput( void );
 static bool AddANMFrame( uint8_t* Data );
 static void CloseANMOutput( void );
 
+/*
 static const char* DitherAlgorithms[ ] = {
     "Floyd-Steinberg",
     "Bayer 4x4",
@@ -40,6 +41,7 @@ static const char* DitherAlgorithms[ ] = {
     "Cluster 16x16",
     "Bayer16x16"
 };
+*/
 
 static FIMULTIBITMAP* OutputGIF = NULL;
 static FILE* OutputFile = NULL;
@@ -179,7 +181,7 @@ bool IsOutputANM( void ) {
 }
 
 bool AddRawFrame( uint8_t* Data ) {
-    int DataSize = ( OutputWidth * OutputHeight ) / 8;
+    size_t DataSize = ( OutputWidth * OutputHeight ) / 8;
 
     NullCheck( OutputFile, return false );
     NullCheck( Data, return false );
@@ -230,7 +232,7 @@ bool AddANMFrame( uint8_t* Data ) {
 void CloseANMOutput( void ) {
     struct ANM0_Header Header;
 
-    if ( OutputFile != NULL ) {
+    if ( OutputFile != NULL && CmdLine_GetWriteHeaderFlag( ) == true ) {
         fseek( OutputFile, 0, SEEK_SET );
             fread( &Header, sizeof( struct ANM0_Header ), 1, OutputFile );
         fseek( OutputFile, 0, SEEK_SET );
@@ -277,7 +279,7 @@ bool WriteOutputFile( void* Data ) {
         /* TODO:
          * Later revisions may add an individual frame header?
          */
-        return AddRawFrame( ( uint8_t* ) Data );
+        return AddANMFrame( ( uint8_t* ) Data );
     } else {
     }
 

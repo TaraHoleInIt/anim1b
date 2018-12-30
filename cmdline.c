@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2017 Tara Keeling
+ * Copyright (c) 2017-2018 Tara Keeling
  * 
  * This software is released under the MIT License.
  * https://opensource.org/licenses/MIT
@@ -32,14 +32,14 @@ static bool DitherFlag = false;
 static bool InvertFlag = false;
 
 static struct argp_option Options[ ] = {
-    { "dither", 'd', "algorithm", OPTION_ARG_OPTIONAL, "Dither output" },
-    { "threshold", 't', "value", 0, "Threshold for non dithered output [0-255]" },
-    { "invert", 'i', NULL, 0, "Invert output" },
-    { "delay", 'l', "delay", 0, "Delay between frames in milliseconds" },
-    { "noheader", 'n', NULL, 0, "Do not write header, only write raw frames" },
-    { "output", 'o', "output", 0, "Output file name" },
-    { "format", 'f', "format", 0, "Image output format" },
-    { NULL }
+    { "dither", 'd', "algorithm", OPTION_ARG_OPTIONAL, "Dither output", 0 },
+    { "threshold", 't', "value", 0, "Threshold for non dithered output [0-255]", 0 },
+    { "invert", 'i', NULL, 0, "Invert output", 0 },
+    { "delay", 'l', "delay", 0, "Delay between frames in milliseconds", 0 },
+    { "noheader", 'n', NULL, 0, "Do not write header, only write raw frames", 0 },
+    { "output", 'o', "output", 0, "Output file name", 0 },
+    { "format", 'f', "format", 0, "Image output format", 0 },
+    { NULL, 0, NULL, 0, NULL, 0 }
 };
 
 const char* argp_program_version = "0.0.1";
@@ -63,7 +63,13 @@ static char Documentation[ ] = "anim1b: Image to SSD1306 converter" \
 static char ArgsDocumentation[ ] = "[input images]";
 
 static struct argp P = {
-    Options, ParseArgs, ArgsDocumentation, Documentation
+    Options, 
+    ParseArgs, 
+    ArgsDocumentation, 
+    Documentation, 
+    NULL, 
+    NULL, 
+    NULL
 };
 
 static char** Filenames = NULL;
@@ -213,7 +219,8 @@ static error_t ParseArgs( int Key, char* Arg, struct argp_state* State ) {
                 argp_error( State, "You must specify --output=filename" );
             }
 
-            if ( State->arg_num < 2 ) {
+            if ( State->arg_num < 1 ) {
+                argp_error( State, "Not enough arguments" );
                 argp_usage( State );
             }
 

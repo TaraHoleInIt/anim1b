@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2017 Tara Keeling
+ * Copyright (c) 2017-2018 Tara Keeling
  * 
  * This software is released under the MIT License.
  * https://opensource.org/licenses/MIT
@@ -18,7 +18,8 @@
 #define BIT( n ) ( 1 << n )
 
 void ErrorHandler( FREE_IMAGE_FORMAT Fmt, const char* Message ) {
-    printf( "%s: %s\n", __FUNCTION__, Message );
+    const char* FormatName = ( Fmt != FIF_UNKNOWN ) ? FreeImage_GetFormatFromFIF( Fmt ) : "UNKNOWN";
+    fprintf( stderr, "FreeImage [%s]: %s\n", FormatName, Message );
 }
 
 /*
@@ -30,8 +31,6 @@ void ErrorHandler( FREE_IMAGE_FORMAT Fmt, const char* Message ) {
 FIBITMAP* OpenInputImage( const char* Filename, int* OutImageWidth, int* OutImageHeight ) {
     FREE_IMAGE_FORMAT InputFormat = FIF_UNKNOWN;
     FIBITMAP* Input = NULL;
-    int Width = 0;
-    int Height = 0;
 
     NullCheck( Filename, return NULL );
     NullCheck( OutImageWidth, return NULL );
@@ -49,7 +48,7 @@ FIBITMAP* OpenInputImage( const char* Filename, int* OutImageWidth, int* OutImag
             if ( *OutImageWidth % 8 == 0 && *OutImageHeight % 8 == 0 )
                 return Input;
 
-            printf( "Error: Input image width and height must be divisible by 8.\n" );
+            fprintf( stderr, "Error: Input image width and height must be divisible by 8.\n" );
 
             FreeImage_Unload( Input );
             Input = NULL;
@@ -98,66 +97,62 @@ FIBITMAP* GetProcessedOutput( FIBITMAP* Input ) {
  * Sets (or clears) the pixel at (x,y) for the
  * SSD1306's horizontal addressing mode.
  */
-void SSD1306_SetPixelHorizontal( uint8_t* Output, int x, int y, int ImageWidth, bool Color ) {
+void SetPixelHorizontal( uint8_t* Output, int x, int y, int ImageWidth, bool Color ) {
+    int PixelOffset = x + ( ( y / 8 ) * ImageWidth );
     int BitOffset = ( y & 0x07 );
 
-    /* 
-     * Divide the y coordinate by 8 to get which page
-     * the bit we want to set is on.
-     */
-    y>>= 3;
-
-    /* Invert color if command line option set */
-    if ( CmdLine_GetInvertFlag( ) == true ) {
-        Color = ! Color;
-    }
-
-    if ( Color == true ) {
-        Output[ x + ( y * ImageWidth ) ] |= BIT( BitOffset );
-    } else {
-        Output[ x + ( y * ImageWidth ) ] &= ~BIT( BitOffset );
-    }
+    Output[ PixelOffset ] = ( Color == true ) ? Output[ PixelOffset ] | BIT( BitOffset ) : Output[ PixelOffset ] & ~BIT( BitOffset );
 }
 
-/*
- * Converts the input bitmap to an output buffer
- * formatted for the SSD1306's horizontal addressing mode.
- */
-void SSD1306_ConvertHorizontal( FIBITMAP* Input, uint8_t* Output, int Width, int Height ) {
+void SetPixelVertical( uint8_t* Output, int x, int y, int ImageWidth, bool Color ) {
+    int BitOffset = ( y & 0x07 );
+    int PageOffset = ( y / 8 );
+    int PixelOffset = 0;
+
+    ( void ) ImageWidth;
+
+    PixelOffset = ( x * 8 ) + PageOffset;
+    Output[ PixelOffset ] = ( Color == true ) ? ( Output[ PixelOffset ] | BIT( BitOffset ) ) : ( Output[ PixelOffset ] & ~BIT( BitOffset ) );
+}
+
+void SetPixelLinear( uint8_t* Output, int x, int y, int ImageWidth, bool Color ) {
+    int BitOffset = 7 - ( x & 0x07 );
+    int PixelOffset = 0;
+
+    PixelOffset = y * ( ImageWidth / 8 );
+    PixelOffset+= ( x / 8 );
+
+    Output[ PixelOffset ] = ( Color == true ) ? ( Output[ PixelOffset ] | BIT( BitOffset ) ) : ( Output[ PixelOffset ] & ~BIT( BitOffset ) );
+}
+
+void DoOutputConversion( FIBITMAP* Input, uint8_t* Output, int Width, int Height ) {
+    void ( *SetPixelFn ) ( uint8_t* Output, int x, int y, int ImageWidth, bool Color ) = NULL;
     uint8_t Color = 0;
     int x = 0;
     int y = 0;
 
-    NullCheck( Input, return );
-    NullCheck( Output, return );
-
-    for ( y = 0; y < Height; y++ ) {
-        for ( x = 0; x < Width; x++ ) {
-            FreeImage_GetPixelIndex( Input, x, y, &Color );
-            SSD1306_SetPixelHorizontal( Output, x, y, Width, ( bool ) Color );
-        }
-    }
-}
-
-void DoOutputConversion( FIBITMAP* Input, uint8_t* Output, int Width, int Height ) {
     switch ( CmdLine_GetOutputFormat( ) ) {
         case Format_1306_Horizontal: {
-            SSD1306_ConvertHorizontal( Input, Output, Width, Height );
+            SetPixelFn = SetPixelHorizontal;
             break;
         }
         case Format_1306_Vertical: {
-            printf( "TODO: Not yet done.\n" );
+            SetPixelFn = SetPixelVertical;
             break;
         }
         case Format_Linear: {
-            printf( "TODO: Not yet done.\n" );
+            SetPixelFn = SetPixelLinear;
             break;
         }
-        default: {
-            printf( "Unknown output format.\n" );
-            break;
-        }
+        default: return;
     };
+
+    for ( x = 0; x < Width; x++ ) {
+        for ( y = 0; y < Height; y++ ) {
+            FreeImage_GetPixelIndex( Input, x, y, &Color );
+            SetPixelFn( Output, x, y, Width, Color );
+        }
+    }
 }
 
 void ProcessFiles( void ) {
@@ -185,7 +180,7 @@ void ProcessFiles( void ) {
     for ( i = 0; i < InputFileCount; i++ ) {
         /* Make sure we successfully open the input image, if we don't then just bail immediately */
         if ( ( InputBitmap = OpenInputImage( InputFilenames[ i ], &InputWidth, &InputHeight ) ) == NULL ) {
-            printf( "Failed to open image %s\n", InputFilenames[ i ] );
+            fprintf( stderr, "Failed to open image %s\n", InputFilenames[ i ] );
 
             Errors = true;
             break;
@@ -201,7 +196,7 @@ void ProcessFiles( void ) {
             /* Ditto */
             if ( OpenOutputFile( ) == false ) {
                 if ( DidUserCancel( ) == false ) {
-                    printf( "Failed to open output file: %s\n", strerror( errno ) );
+                    fprintf( stderr, "Failed to open output file: %s\n", strerror( errno ) );
                     Errors = true;
                 }
                 
@@ -212,7 +207,7 @@ void ProcessFiles( void ) {
              * to allocate one of the proper size ourselves here.
              */
             if ( ( OutputFramebuffer = ( uint8_t* ) malloc( ( InputWidth * InputHeight ) / 8 ) ) == NULL ) {
-                printf( "Failed to allocate an output framebuffer.\n" );
+                fprintf( stderr, "Failed to allocate an output framebuffer.\n" );
 
                 Errors = true;
                 break;
@@ -223,7 +218,7 @@ void ProcessFiles( void ) {
          * and move onto the next image.
          */
         if ( InputWidth != OutputWidth || InputHeight != OutputHeight ) {
-            printf( "Image %s has a size of %dx%d when we expected %dx%d. Skipping.\n", 
+            fprintf( stderr, "Image %s has a size of %dx%d when we expected %dx%d. Skipping.\n", 
                 InputFilenames[ i ],
                 InputWidth,
                 InputHeight,
@@ -237,7 +232,7 @@ void ProcessFiles( void ) {
 
         /* This really should never fail, but if it does try to keep going anyway */
         if ( ( OutputBitmap = GetProcessedOutput( InputBitmap ) ) == NULL ) {
-            printf( "Failed to convert image %s. Skipping.\n", InputFilenames[ i ] );
+            fprintf( stderr, "Failed to convert image %s. Skipping.\n", InputFilenames[ i ] );
 
             Errors = true;
             continue;
@@ -261,7 +256,7 @@ void ProcessFiles( void ) {
     printf( "Processed %d of %d input images.\n", FramesWritten, InputFileCount );
     
     if ( Errors == true ) {
-        printf( "There were errors during the conversion.\nOutput file may be incomplete or invalid.\n" );
+        fprintf( stderr, "There were errors during the conversion.\nOutput file may be incomplete or invalid.\n" );
     }
 
     if ( OutputFramebuffer != NULL ) {
