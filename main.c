@@ -98,12 +98,34 @@ FIBITMAP* GetProcessedOutput( FIBITMAP* Input ) {
  * SSD1306's horizontal addressing mode.
  */
 void SetPixelHorizontal( uint8_t* Output, int x, int y, int ImageWidth, int ImageHeight, bool Color ) {
+#if 0
     int PixelOffset = x + ( ( y / 8 ) * ImageWidth );
     int BitOffset = ( y & 0x07 );
 
     ( void ) ImageHeight;
 
     Output[ PixelOffset ] = ( Color == true ) ? Output[ PixelOffset ] | BIT( BitOffset ) : Output[ PixelOffset ] & ~BIT( BitOffset );
+#endif
+    int BitOffset = ( y & 0x07 );
+
+    ( void ) ImageHeight;
+
+    /* 
+     * Divide the y coordinate by 8 to get which page
+     * the bit we want to set is on.
+     */
+    y>>= 3;
+
+    /* Invert color if command line option set */
+    if ( CmdLine_GetInvertFlag( ) == true ) {
+        Color = ! Color;
+    }
+
+    if ( Color == true ) {
+        Output[ x + ( y * ImageWidth ) ] |= BIT( BitOffset );
+    } else {
+        Output[ x + ( y * ImageWidth ) ] &= ~BIT( BitOffset );
+    }
 }
 
 void SetPixelVertical( uint8_t* Output, int x, int y, int ImageWidth, int ImageHeight, bool Color ) {
@@ -150,6 +172,8 @@ void DoOutputConversion( FIBITMAP* Input, uint8_t* Output, int Width, int Height
         }
         default: return;
     };
+
+    FreeImage_FlipVertical( Input );
 
     for ( x = 0; x < Width; x++ ) {
         for ( y = 0; y < Height; y++ ) {
